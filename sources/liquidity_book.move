@@ -9,20 +9,22 @@ module l1dex::liquidity_book {
     use l1dex::ufp256::{Self, UFP256};
 
     const MAX_U64: u64 = 18446744073709551615; // 2^64 - 1
-    // The protocol base fee in basis points (0.2%)
-    const BASE_FEE_BPS: u64 = 20;
+    // The protocol max pool fee in basis points (0.5%)
+    const MAX_BASE_FEE_BPS: u64 = 50;
 
     // Errors
-    const EInsufficientPoolLiquidity: u64 = 1;
-
+    #[error]
+    const EInsufficientPoolLiquidity: vector<u8> = 
+        b"There is not enough liquidity inside the pool to fulfill the trade.";
     // Structs
 
     /// Liquidity Book trading pool type.
     public struct Pool<phantom L, phantom R> has key, store {
         id: UID,
         bins: VecMap<u64, PoolBin<L, R>>, // bins are identified with a unique id
-        active_bin_id: u64,
+        active_bin_id: u64, // id of the active bin
         bin_step_bps: u64, // The step/delta between bins in basis points (0.0001)
+        fee_bps: u64, // The base fee for a swap
     }
 
     /// Bin type for a Liquidity Book trading pool.
@@ -30,15 +32,13 @@ module l1dex::liquidity_book {
         price: UFP256, // amount(L) * price = amount(R)
         balance_left: Balance<L>,
         balance_right: Balance<R>,
-        fees_left: Balance<L>,
-        fees_right: Balance<R>,
         fee_log_left: vector<FeeLogEntry>,
         fee_log_right: vector<FeeLogEntry>
     }
 
     public struct FeeLogEntry has store, copy, drop {
         amount: u64,
-        timestamp_ms: u64, // When the fee was generated
+        timestamp_ms: u64, // When the fee was generated 
         total_bin_size: u64 // The amount of tokens in the bin (expressed in just one token)
     }
 
@@ -51,17 +51,19 @@ module l1dex::liquidity_book {
     }
 
     /// Receipt given to liquidity providers when they provide liquidity. Can be
-    /// used to withdraw provided liquidity.
-    public struct LiquidityProviderReceipt has key, store {
+    /// used to withdraw provided liquidity. No `store` capability so this 
+    /// cannot (accidentally) be transferred.
+    public struct LiquidityProviderReceipt has key {
         id: UID,
         deposit_time_ms: u64, 
         liquidity: vector<BinProvidedLiquidity>
     }
 
     /// Create a new Liquidity Book `Pool`
-    entry fun new<L, R>(
+    public entry fun new<L, R>(
         bin_step_bps: u64, 
         starting_price_mantissa: u256,
+        fee_bps: u64,
         ctx: &mut TxContext
     ) {
         let starting_price = ufp256::new(starting_price_mantissa);
@@ -69,8 +71,6 @@ module l1dex::liquidity_book {
             price: starting_price,
             balance_left: balance::zero<L>(),
             balance_right: balance::zero<R>(),
-            fees_left: balance::zero<L>(),
-            fees_right: balance::zero<R>(),
             fee_log_left: vector::empty(),
             fee_log_right: vector::empty()
         };
@@ -81,17 +81,24 @@ module l1dex::liquidity_book {
             starting_bin
         );
 
+        let fee_bps = MAX_BASE_FEE_BPS.max(fee_bps);
+
         // Create and share the pool
         let pool = Pool<L, R> {
             id: object::new(ctx),
             bins,
             active_bin_id: starting_bin_id,
             bin_step_bps,
+            fee_bps,
         };
         transfer::public_share_object(pool);
     }
 
-    fun get_active_price<L, R>(pool: &Pool<L, R>): UFP256 {
+    fun fee_bps<L, R>(self: &Pool<L, R>): u64 {
+        return self.fee_bps
+    }
+
+    public fun get_active_price<L, R>(pool: &Pool<L, R>): UFP256 {
         pool.get_active_bin().price
     }
 
@@ -115,13 +122,13 @@ module l1dex::liquidity_book {
     }
 
     /// Get a reference to a bin from a bin `id`
-    public fun get_bin<L, R>(pool: &Pool<L, R>, id: &u64): &PoolBin<L, R>{
-        let bin = pool.bins.get(id);
+    public fun get_bin<L, R>(self: &Pool<L, R>, id: &u64): &PoolBin<L, R>{
+        let bin = self.bins.get(id);
         bin
     }
 
     /// Calculate the value of two amounts represented as the left
-    fun amount_as_l(price: UFP256, amount_l: u64, amount_r: u64): u64 {
+    public fun amount_as_l(price: UFP256, amount_l: u64, amount_r: u64): u64 {
         amount_l + price.div_u64(amount_r)
     }
 
@@ -139,31 +146,17 @@ module l1dex::liquidity_book {
         closest_bin
     }
 
-    fun get_bin_mut<L, R>(pool: &mut Pool<L, R>, id: u64): &mut PoolBin<L, R>{
-        pool.bins.get_mut(&id)
+    fun get_bin_mut<L, R>(self: &mut Pool<L, R>, id: u64): &mut PoolBin<L, R>{
+        self.bins.get_mut(&id)
     }
 
-    // public fun bin_prev_price<L, R>(pool: &Pool<L, R>, bin_id: u64): ufp256 {
-    //     let bin_price_factor = ufp256::from_fraction(10000 + pool.bin_step_bps, 10000);
-    //     // use mul, pow_neg(1) for consistency with bin creation
-    //     bin.price.mul(bin_price_factor.pow_neg(1))
-    // }
-
-    // public fun bin_next_price<L, R>(pool: &Pool<L, R>, bin: &PoolBin<L, R>): ufp256 {
-    //     let bin_price_factor = ufp256::from_fraction(10000 + pool.bin_step_bps, 10000);
-    //     // use mul, pow(1) for consistency with bin creation
-    //     bin.price.mul(bin_price_factor.pow(1))
-    // }
-
     /// Add a bin to a pool at a particular price if it doesn't exist yet
-    fun add_bin<L, R>(pool: &mut Pool<L, R>, id: u64, price: UFP256) {
-        if (!pool.bins.contains(&id)) {
-            pool.bins.insert(id, PoolBin {
+    fun add_bin<L, R>(self: &mut Pool<L, R>, id: u64, price: UFP256) {
+        if (!self.bins.contains(&id)) {
+            self.bins.insert(id, PoolBin {
                 price: price,
                 balance_left: balance::zero<L>(),
                 balance_right: balance::zero<R>(),
-                fees_left: balance::zero<L>(),
-                fees_right: balance::zero<R>(),
                 fee_log_left: vector::empty(),
                 fee_log_right: vector::empty()
             });
@@ -171,36 +164,26 @@ module l1dex::liquidity_book {
     }
 
     /// Get the value of `price` of a bin
-    public fun price<L, R>(bin: &PoolBin<L, R>): UFP256 {
-        bin.price
+    public fun price<L, R>(self: &PoolBin<L, R>): UFP256 {
+        self.price
     }
 
     /// Get the value of `balance_left` of a bin
-    public fun balance_left<L, R>(bin: &PoolBin<L, R>): u64 {
-        bin.balance_left.value()
+    public fun balance_left<L, R>(self: &PoolBin<L, R>): u64 {
+        self.balance_left.value()
     }
 
     /// Get the value of `balance_right` of a bin
-    public fun balance_right<L, R>(bin: &PoolBin<L, R>): u64 {
-        bin.balance_right.value()
+    public fun balance_right<L, R>(self: &PoolBin<L, R>): u64 {
+        self.balance_right.value()
     }
-
-    // fun add_provider_position<L, R>(bin: &mut PoolBin<L, R>, provider: address, amount_l: u64, amount_r: u64) {
-    //     // Update the position of a liquidity provider within a bin
-    //     let providers = &mut bin.providers;
-    //     if (providers.contains(&provider)) {
-    //         *providers.get_mut(&provider) = *providers.get(&provider) + amount_as_l(bin.price, amount_l, amount_r);
-    //     } else {
-    //         providers.insert(provider, amount_as_l(bin.price, amount_l, amount_r));
-    //     };
-    // }
 
     /// Add liquidity to the pool around the active bin with an equal 
     /// distribution amongst those bins
-    entry fun add_liquidity_linear<L, R>(
-        pool: &mut Pool<L, R>, 
-        bin_count: u64, 
-        mut coin_left: Coin<L>, 
+    entry fun add_liquidity_uniformly<L, R>(
+        pool: &mut Pool<L, R>,
+        bin_count: u64,
+        mut coin_left: Coin<L>,
         mut coin_right: Coin<R>,
         clock: &Clock,
         ctx: &mut TxContext
@@ -294,34 +277,72 @@ module l1dex::liquidity_book {
             let provided_liquidity = liquidity.pop_back();
             let bin = pool.get_bin_mut(provided_liquidity.bin_id);
 
+            // Calculate earned fees on `right` provided liquidity
+            let mut fees_earned_left = 0;
+            if (provided_liquidity.right > 0) {
+                // Traverse `fee_log_left` backwards to avoid deletion complexity
+                let mut i = bin.fee_log_left.length();
+                while (i > 0){
+                    let mut fee_log = bin.fee_log_left[i - 1];
+                    if (fee_log.timestamp_ms >= deposit_time_ms) {
+                        let fee = ufp256::from_fraction((fee_log.amount as u256) * (provided_liquidity.right as u256), fee_log.total_bin_size as u256).truncate_to_u64();
+                        fees_earned_left = fees_earned_left + fee;
+                        // Update fee log and delete if empty
+                        fee_log.amount = fee_log.amount - fee;
+                        fee_log.total_bin_size = fee_log.total_bin_size - provided_liquidity.right;
+                        if (fee_log.amount == 0) {
+                            bin.fee_log_left.remove(i - 1);
+                        };
+                    };
+                    i = i - 1;
+                }
+            };
+            // Calculate earned fees on `left` provided liquidity
+            let mut fees_earned_right = 0;
+            if (provided_liquidity.left > 0) {
+                // Traverse `fee_log_right` backwards to avoid deletion complexity
+                let mut i = bin.fee_log_right.length();
+                while (i > 0){
+                    let mut fee_log = bin.fee_log_right[i - 1];
+                    if (fee_log.timestamp_ms >= deposit_time_ms) {
+                        let fee = ufp256::from_fraction((fee_log.amount as u256) * (provided_liquidity.left as u256), fee_log.total_bin_size as u256).truncate_to_u64();
+                        fees_earned_right = fees_earned_right + fee;
+                        // Update fee log and delete if empty
+                        fee_log.amount = fee_log.amount - fee;
+                        fee_log.total_bin_size = fee_log.total_bin_size - provided_liquidity.left;
+                        if (fee_log.amount == 0) {
+                            bin.fee_log_right.remove(i - 1);
+                        };
+                    };
+                    i = i - 1;
+                }
+            };
+
             // Withdraw left liquidity
             if (provided_liquidity.left > 0) {
-                if (bin.balance_left.value() >= provided_liquidity.left) {
-                    result_coin_left.join(bin.balance_left.split(provided_liquidity.left).into_coin(ctx));
+                let payout_left_amount = provided_liquidity.left + fees_earned_left;
+                if (bin.balance_left.value() >= payout_left_amount) {
+                    result_coin_left.join(bin.balance_left.split(payout_left_amount).into_coin(ctx));
                 } else {
-                    let remainder = provided_liquidity.left - bin.balance_left.value();
+                    let remainder = payout_left_amount - bin.balance_left.value();
                     result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
                     let remainder_in_r = bin.price.mul_u64(remainder);
+                    // TODO: clean this up, this is ugly
                     if (bin.balance_right.value() >= remainder_in_r) {
                         result_coin_right.join(bin.balance_right.split(remainder_in_r).into_coin(ctx));
                     } else {
                         result_coin_right.join(bin.balance_right.withdraw_all().into_coin(ctx));
                     };
                 };
-
-                // Pay out fees
-                bin.fee_log_right.do!(|log| {
-                    let payout_amount = ufp256::from_fraction((log.amount as u256) * (provided_liquidity.left as u256), log.total_bin_size as u256).truncate_to_u64();
-                    result_coin_right.join(bin.fees_right.split(payout_amount).into_coin(ctx));
-                });
             };
 
             // Withdraw right liquidity
             if (provided_liquidity.right > 0) {
-                if (bin.balance_right.value() >= provided_liquidity.right) {
-                    result_coin_right.join(bin.balance_right.split(provided_liquidity.right).into_coin(ctx));
+                let payout_right_amount = provided_liquidity.right + fees_earned_right;
+                if (bin.balance_right.value() >= payout_right_amount) {
+                    result_coin_right.join(bin.balance_right.split(payout_right_amount).into_coin(ctx));
                 } else {
-                    let remainder = provided_liquidity.right - bin.balance_right.value();
+                    let remainder = payout_right_amount - bin.balance_right.value();
                     result_coin_right.join(bin.balance_right.withdraw_all().into_coin(ctx));
                     let remainder_in_l = bin.price.div_u64(remainder);
                     if (bin.balance_left.value() >= remainder_in_l) {
@@ -330,12 +351,6 @@ module l1dex::liquidity_book {
                         result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
                     };
                 };
-
-                // Pay out fees
-                bin.fee_log_left.do!(|log| {
-                    let payout_amount = ufp256::from_fraction((log.amount as u256) * (provided_liquidity.left as u256), log.total_bin_size as u256).truncate_to_u64();
-                    result_coin_left.join(bin.fees_left.split(payout_amount).into_coin(ctx));
-                });
             };
         };
         liquidity.destroy_empty();
@@ -350,38 +365,29 @@ module l1dex::liquidity_book {
         object::delete(receipt_id);
     }
 
-    /// Apply fee of `fee_bps` basis points to the output of the trade
-    fun apply_fee_out(amount: u64, fee_bps: u64): u64 {
-        let fee_factor = ufp256::from_fraction((10000 - fee_bps) as u256, 10000u256);
-        fee_factor.mul_u64(amount)
-    }
-
-    /// Apply fee of `fee_bps` basis points to the input of the trade
-    fun apply_fee_in(amount: u64, fee_bps: u64): u64 {
-        let fee_factor = ufp256::from_fraction((10000 + fee_bps) as u256, 10000u256);
-        fee_factor.mul_u64(amount)
-    }
-
-    /// Calculate fee of `fee_bps`
+    /// Calculate fee of `fee_bps` basis points.
     fun get_fee(amount: u64, fee_bps: u64): u64 {
         let fee_factor = ufp256::from_fraction(fee_bps as u256, 10000);
         fee_factor.mul_u64(amount)
     }
     
-    /// Calculate fee of `fee_bps`, but on the output: amount/(1-fee) - amount
+    /// Calculate fee of `fee_bps` basis points, but on the output of a trade: amount/(1-fee) - amount.
     fun get_fee_inv(amount: u64, fee_bps: u64): u64 {
         ufp256::from_fraction((10000 - fee_bps) as u256, 10000)
         .div_u64(amount)
         - amount
     }
 
+    // Swap `coin_left` for an equivalent amount of `R` in `pool`.
     public fun swap_ltr<L, R>(pool: &mut Pool<L, R>, mut coin_left: Coin<L>, clock: &Clock, ctx: &mut TxContext) {
         let mut result_coin = coin::zero<R>(ctx);
+        let fee_bps = pool.fee_bps();
+        // Keep emptying bins until `coin_left` is fully swapped
         while (coin_left.value() > 0) { 
             let active_bin = pool.get_active_bin_mut();
             let active_bin_right_starting_balance = active_bin.balance_right();
 
-            let mut fee = get_fee(coin_left.value(), BASE_FEE_BPS);
+            let mut fee = get_fee(coin_left.value(), fee_bps);
 
             let mut swap_left = coin_left.value() - fee;
             let mut swap_right = active_bin.price.mul_u64(swap_left);
@@ -391,7 +397,7 @@ module l1dex::liquidity_book {
                 // Not enough balance after fees in this bin to fulfill swap.
                 swap_right = bin_balance_right;
                 swap_left = active_bin.price.div_u64(bin_balance_right);
-                fee = get_fee_inv(swap_left, BASE_FEE_BPS);
+                fee = get_fee_inv(swap_left, fee_bps);
             };
 
             // Execute swap
@@ -399,7 +405,7 @@ module l1dex::liquidity_book {
             result_coin.join(active_bin.balance_right.split(swap_right).into_coin(ctx));
 
             // Register fees
-            active_bin.fees_left.join(coin_left.split(fee, ctx).into_balance());
+            active_bin.balance_left.join(coin_left.split(fee, ctx).into_balance());
             active_bin.fee_log_left.push_back(
                 FeeLogEntry {
                     amount: fee,
@@ -422,13 +428,16 @@ module l1dex::liquidity_book {
         transfer::public_transfer(result_coin, ctx.sender());
     }
 
+    // Swap `coin_right` for an equivalent amount of `L` in `pool`.
     public fun swap_rtl<L, R>(pool: &mut Pool<L, R>, mut coin_right: Coin<R>, clock: &Clock, ctx: &mut TxContext) {
         let mut result_coin = coin::zero<L>(ctx);
+        let fee_bps = pool.fee_bps();
+        // Keep emptying bins until `coin_right` is fully swapped
         while (coin_right.value() > 0) { 
             let active_bin = pool.get_active_bin_mut();
             let active_bin_left_starting_balance = active_bin.balance_left();
 
-            let mut fee = get_fee(coin_right.value(), BASE_FEE_BPS);
+            let mut fee = get_fee(coin_right.value(), fee_bps);
 
             let mut swap_right = coin_right.value() - fee;
             let mut swap_left = active_bin.price.div_u64(swap_right);
@@ -438,7 +447,7 @@ module l1dex::liquidity_book {
                 // Not enough balance after fees in this bin to fulfill swap.
                 swap_left = bin_balance_left;
                 swap_right = active_bin.price.mul_u64(swap_left);
-                fee = get_fee_inv(swap_right, BASE_FEE_BPS);
+                fee = get_fee_inv(swap_right, fee_bps);
             };
 
             // Execute swap
@@ -446,7 +455,7 @@ module l1dex::liquidity_book {
             result_coin.join(active_bin.balance_left.split(swap_left).into_coin(ctx));
 
             // Register fees
-            active_bin.fees_right.join(coin_right.split(fee, ctx).into_balance());
+            active_bin.balance_right.join(coin_right.split(fee, ctx).into_balance());
             active_bin.fee_log_right.push_back(
                 FeeLogEntry {
                     amount: fee,
