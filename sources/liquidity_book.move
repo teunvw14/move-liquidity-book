@@ -5,8 +5,6 @@ use iota::balance::{Self, Balance};
 use iota::vec_map::{Self, VecMap};
 use iota::coin::{Self, Coin};
 use iota::clock::Clock;
-// TODO: remove these imports later
-use iota::test_utils;
 
 use l1dex::ufp256::{Self, UFP256};
 
@@ -16,17 +14,21 @@ const MAX_BASE_FEE_BPS: u64 = 50;
 
 // Errors
 #[error]
-const EInsufficientPoolLiquidity: vector<u8> = 
+const EInsufficientPoolLiquidity: vector<u8> =
     b"There is not enough liquidity inside the pool to fulfill the trade.";
 
 #[error]
-const EEvenBincount: vector<u8> = 
+const EEvenBincount: vector<u8> =
     b"Illegal bin count. Bin count should be uneven.";
 
 #[error]
-const ENoLiquidityProvided: vector<u8> = 
+const ENoLiquidityProvided: vector<u8> =
     b"No tokens supplied.";
-    
+
+#[error]
+const EInvalidPoolID: vector<u8> =
+    b"Pool ID on receipt and withdrawal pool ID are not the same.";
+
 // Structs
 
 /// Liquidity Book trading pool type.
@@ -49,9 +51,10 @@ public struct PoolBin<phantom L, phantom R> has store {
     provided_right: u64,
 }
 
+/// Type for keeping track of generated fees inside a pool.
 public struct FeeLogEntry has store, copy, drop {
     amount: u64,
-    timestamp_ms: u64, // When the fee was generated 
+    timestamp_ms: u64, // When the fee was generated
     total_bin_size_as_l: u64 // The amount of tokens in the bin (expressed in just one token)
 }
 
@@ -63,18 +66,19 @@ public struct BinProvidedLiquidity has store, copy, drop {
     right: u64
 }
 
-/// Receipt given to liquidity providers when they provide liquidity. Can be
-/// used to withdraw provided liquidity. No `store` capability so this 
-/// cannot (accidentally) be transferred.
+/// Receipt given to liquidity providers when they provide liquidity. Is used to
+/// withdraw provided liquidity. No `store` capability so this cannot
+/// (accidentally) be transferred.
 public struct LiquidityProviderReceipt has key {
     id: UID,
-    deposit_time_ms: u64, 
+    pool_id: ID,
+    deposit_time_ms: u64,
     liquidity: vector<BinProvidedLiquidity>
 }
 
 /// Create a new Liquidity Book `Pool`
 public entry fun new<L, R>(
-    bin_step_bps: u64, 
+    bin_step_bps: u64,
     starting_price_mantissa: u256,
     fee_bps: u64,
     ctx: &mut TxContext
@@ -110,63 +114,56 @@ public entry fun new<L, R>(
     transfer::public_share_object(pool);
 }
 
-fun fee_bps<L, R>(self: &Pool<L, R>): u64 {
+/// Public accessor for `pool.fee_bps`.
+public fun fee_bps<L, R>(self: &Pool<L, R>): u64 {
     return self.fee_bps
 }
 
-public fun get_active_price<L, R>(pool: &Pool<L, R>): UFP256 {
-    pool.get_active_bin().price
+/// Returns the pool's active bin price.
+public fun get_active_price<L, R>(self: &Pool<L, R>): UFP256 {
+    self.get_active_bin().price
 }
 
-public fun get_active_bin_id<L, R>(pool: &Pool<L, R>): u64{
-    pool.active_bin_id
+/// Public accessor for `pool.active_bin_id`.
+public fun get_active_bin_id<L, R>(self: &Pool<L, R>): u64{
+    self.active_bin_id
 }
 
-public fun get_active_bin<L, R>(pool: &Pool<L, R>): &PoolBin<L, R>{
-    pool.get_bin(&pool.active_bin_id)
+/// Returns a reference to the pool `active_bin`.
+public fun get_active_bin<L, R>(self: &Pool<L, R>): &PoolBin<L, R>{
+    self.get_bin(&self.active_bin_id)
 }
 
-fun get_active_bin_mut<L, R>(pool: &mut Pool<L, R>): &mut PoolBin<L, R>{
-    pool.bins.get_mut(&pool.active_bin_id)
+/// Private mutable accessor for the pool `active_bin`.
+fun get_active_bin_mut<L, R>(self: &mut Pool<L, R>): &mut PoolBin<L, R>{
+    self.bins.get_mut(&self.active_bin_id)
 }
 
-/// Set `pool` active bin
-fun set_active_bin<L, R>(pool: &mut Pool<L, R>, id: u64) {
-    if (pool.bins.contains(&id)) {
-        pool.active_bin_id = id;
+/// Setter for `pool.active_bin_id`.
+fun set_active_bin<L, R>(self: &mut Pool<L, R>, id: u64) {
+    if (self.bins.contains(&id)) {
+        self.active_bin_id = id;
     }
 }
 
-/// Get a reference to a bin from a bin `id`
+/// Returns a reference to a bin from a bin `id`.
 public fun get_bin<L, R>(self: &Pool<L, R>, id: &u64): &PoolBin<L, R>{
     let bin = self.bins.get(id);
     bin
 }
 
-/// Calculate the value of two amounts represented as the left
+/// Calculate the value of two amounts represented as the left given price
+/// `price`.
 public fun amount_as_l(price: UFP256, amount_l: u64, amount_r: u64): u64 {
     amount_l + price.div_u64(amount_r)
 }
 
-public fun get_closest_bin<L, R>(pool: &Pool<L, R>, price: UFP256): u64{
-    let mut min_diff = ufp256::new(2u256.pow(254));
-    let mut closest_bin = pool.get_active_bin_id();
-    pool.bins.keys().do!(|bin_id| {
-        let bin_price = pool.bins.get(&bin_id).price;
-        let diff = price.diff(bin_price);
-        if (diff.min(min_diff) == diff) {
-            min_diff = diff;
-            closest_bin = bin_id;
-        }
-    });
-    closest_bin
-}
-
+/// Private mutable accessor for pool bin with id `id`.
 fun get_bin_mut<L, R>(self: &mut Pool<L, R>, id: u64): &mut PoolBin<L, R>{
     self.bins.get_mut(&id)
 }
 
-/// Add a bin to a pool at a particular price if it doesn't exist yet
+/// Add a bin to a pool at a particular price if it doesn't exist yet.
 fun add_bin<L, R>(self: &mut Pool<L, R>, id: u64, price: UFP256) {
     if (!self.bins.contains(&id)) {
         self.bins.insert(id, PoolBin {
@@ -181,25 +178,25 @@ fun add_bin<L, R>(self: &mut Pool<L, R>, id: u64, price: UFP256) {
     };
 }
 
-/// Get the value of `price` of a bin
+/// Public accessor for `bin.price`.
 public fun price<L, R>(self: &PoolBin<L, R>): UFP256 {
     self.price
 }
 
-/// Get the value of `balance_left` of a bin
+/// Returns the left balance of a bin.
 public fun balance_left<L, R>(self: &PoolBin<L, R>): u64 {
     self.balance_left.value()
 }
 
-/// Get the value of `balance_right` of a bin
+/// Returns the right balance of a bin.
 public fun balance_right<L, R>(self: &PoolBin<L, R>): u64 {
     self.balance_right.value()
 }
 
-/// Add liquidity to the pool around the active bin with an equal 
-/// distribution amongst those bins
+/// Add liquidity to the pool around the active bin with a uniform distribution
+/// of the tokens amongst those bins.
 entry fun add_liquidity_uniformly<L, R>(
-    pool: &mut Pool<L, R>,
+    self: &mut Pool<L, R>,
     bin_count: u64,
     mut coin_left: Coin<L>,
     mut coin_right: Coin<R>,
@@ -212,34 +209,35 @@ entry fun add_liquidity_uniformly<L, R>(
     assert!(bin_count % 2 == 1, EEvenBincount);
 
     // Assert some minimal amount of liquidity is added
-    assert!(coin_left.value() > 0 || coin_right.value() > 0, 
+    assert!(coin_left.value() > 0 || coin_right.value() > 0,
         ENoLiquidityProvided);
 
-    let active_bin_id = pool.get_active_bin_id();
+    let active_bin_id = self.get_active_bin_id();
     let bin_count_half = (bin_count - 1) / 2; // the amount of bins left and right of the active bin
-    let bin_price_factor = ufp256::from_fraction((10000 + pool.bin_step_bps) as u256, 10000u256);
+    let bin_price_factor = ufp256::from_fraction((10000 + self.bin_step_bps) as u256, 10000u256);
 
     // Create receipt that will function as proof of providing liquidity
     let mut receipt = LiquidityProviderReceipt {
         id: object::new(ctx),
+        pool_id: self.id.to_inner(),
         deposit_time_ms: clock.timestamp_ms(),
         liquidity: vector::empty()
     };
 
     // Add left bins
     let coin_left_per_bin = coin_left.value() / (bin_count_half + 1);
-    let mut new_bin_price = pool.get_active_price().div(bin_price_factor);
+    let mut new_bin_price = self.get_active_price().div(bin_price_factor);
     1u64.range_do_eq!(bin_count_half, |n| {
         // Initiate new bin
         let new_bin_id = active_bin_id - n;
-        pool.add_bin(new_bin_id, new_bin_price);
-        let new_bin = pool.get_bin_mut(new_bin_id);
+        self.add_bin(new_bin_id, new_bin_price);
+        let new_bin = self.get_bin_mut(new_bin_id);
 
         // Add balance to new bin
         let balance_for_bin = coin_left.split(coin_left_per_bin, ctx).into_balance();
         new_bin.balance_left.join(balance_for_bin);
         new_bin.provided_left = new_bin.provided_left + coin_left_per_bin;
-        
+
         // Update receipt
         receipt.liquidity.push_back(BinProvidedLiquidity{
             bin_id: new_bin_id,
@@ -251,12 +249,12 @@ entry fun add_liquidity_uniformly<L, R>(
 
     // Add right bins
     let coin_right_per_bin = coin_right.value() / (bin_count_half + 1);
-    let mut new_bin_price = pool.get_active_price().mul(bin_price_factor);
+    let mut new_bin_price = self.get_active_price().mul(bin_price_factor);
     1u64.range_do_eq!(bin_count_half, |n| {
         // Initiate new bin
         let new_bin_id = active_bin_id + n;
-        pool.add_bin(new_bin_id, new_bin_price);
-        let new_bin = pool.get_bin_mut(new_bin_id);
+        self.add_bin(new_bin_id, new_bin_price);
+        let new_bin = self.get_bin_mut(new_bin_id);
 
         // Add balance to new bin
         let balance_for_bin = coin_right.split(coin_right_per_bin, ctx).into_balance();
@@ -275,7 +273,7 @@ entry fun add_liquidity_uniformly<L, R>(
     // Add remaining liquidity to the active bin
     let amount_left_active_bin = coin_left.value();
     let amount_right_active_bin = coin_right.value();
-    let active_bin = pool.get_active_bin_mut();
+    let active_bin = self.get_active_bin_mut();
     active_bin.balance_left.join(coin_left.into_balance());
     active_bin.balance_right.join(coin_right.into_balance());
     active_bin.provided_left = active_bin.provided_left + amount_left_active_bin;
@@ -283,7 +281,7 @@ entry fun add_liquidity_uniformly<L, R>(
 
     // Update receipt for liquidity provided in the pool.active_bin
     receipt.liquidity.push_back(BinProvidedLiquidity{
-        bin_id: pool.get_active_bin_id(),
+        bin_id: self.get_active_bin_id(),
         left: amount_left_active_bin,
         right: amount_right_active_bin
     });
@@ -292,15 +290,20 @@ entry fun add_liquidity_uniformly<L, R>(
     transfer::transfer(receipt, ctx.sender());
 }
 
-entry fun withdraw_liquidity<L, R> (pool: &mut Pool<L, R>, receipt: LiquidityProviderReceipt, ctx: &mut TxContext) {
-    let LiquidityProviderReceipt {id: receipt_id, deposit_time_ms, liquidity: mut provided_liquidity} = receipt;
-    
+/// Withdraw all provided liquidity from `pool` using a
+/// `LiquidityProviderReceipt`.
+entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityProviderReceipt, ctx: &mut TxContext) {
+    let LiquidityProviderReceipt {id: receipt_id, pool_id: receipt_pool_id, deposit_time_ms, liquidity: mut provided_liquidity} = receipt;
+
+    // Make sure that he receipt was given for liquidity in this pool
+    assert!(self.id.to_inner() == receipt_pool_id, EInvalidPoolID);
+
     let mut result_coin_left = coin::zero<L>(ctx);
     let mut result_coin_right = coin::zero<R>(ctx);
 
     while (!provided_liquidity.is_empty()) {
         let bin_provided_liquidity = provided_liquidity.pop_back();
-        let bin = pool.get_bin_mut(bin_provided_liquidity.bin_id);
+        let bin = self.get_bin_mut(bin_provided_liquidity.bin_id);
 
         let bin_provided_liquidity_as_l = amount_as_l(bin.price(), bin_provided_liquidity.left, bin_provided_liquidity.right);
 
@@ -378,6 +381,14 @@ entry fun withdraw_liquidity<L, R> (pool: &mut Pool<L, R>, receipt: LiquidityPro
                 result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
             };
         };
+
+        // TODO: maybe remove this? put into `clean_empty_bins`?
+        // Empty out balances if this is the last liquidity provider, so that
+        // the bin can be cleaned up
+        if (bin.provided_left == 0 && bin.provided_right == 0) {
+            result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
+            result_coin_right.join(bin.balance_right.withdraw_all().into_coin(ctx));
+        };
     };
     provided_liquidity.destroy_empty();
 
@@ -391,27 +402,27 @@ entry fun withdraw_liquidity<L, R> (pool: &mut Pool<L, R>, receipt: LiquidityPro
     object::delete(receipt_id);
 }
 
-/// Calculate fee of `fee_bps` basis points.
+/// Calculate a fee of `fee_bps` basis points.
 fun get_fee(amount: u64, fee_bps: u64): u64 {
     let fee_factor = ufp256::from_fraction(fee_bps as u256, 10000);
     fee_factor.mul_u64(amount)
 }
 
-/// Calculate fee of `fee_bps` basis points, but on the output of a trade: amount/(1-fee) - amount.
+/// Calculate a fee of `fee_bps` basis points, but on the output of a trade: amount/(1-fee) - amount.
 fun get_fee_inv(amount: u64, fee_bps: u64): u64 {
     ufp256::from_fraction((10000 - fee_bps) as u256, 10000)
     .div_u64(amount)
     - amount
 }
 
-// Swap `coin_left` for an equivalent amount of `R` in `pool`.
-public fun swap_ltr<L, R>(pool: &mut Pool<L, R>, mut coin_left: Coin<L>, clock: &Clock, ctx: &mut TxContext): Coin<R> {
+// Swap `coin_left` for an equivalent amount of `R` in a `Pool`
+public fun swap_ltr<L, R>(self: &mut Pool<L, R>, mut coin_left: Coin<L>, clock: &Clock, ctx: &mut TxContext): Coin<R> {
     let mut result_coin = coin::zero<R>(ctx);
-    let fee_bps = pool.fee_bps();
-    
+    let fee_bps = self.fee_bps();
+
     // Keep emptying bins until `coin_left` is fully swapped
-    while (coin_left.value() > 0) { 
-        let active_bin = pool.get_active_bin_mut();
+    while (coin_left.value() > 0) {
+        let active_bin = self.get_active_bin_mut();
 
         let mut fee = get_fee(coin_left.value(), fee_bps);
         let mut swap_left = coin_left.value();
@@ -440,29 +451,29 @@ public fun swap_ltr<L, R>(pool: &mut Pool<L, R>, mut coin_left: Coin<L>, clock: 
             }
         );
 
-        // Cross over one bin right if active bin is empty after swap, 
-        // abort if swap is not complete and no bins are left 
+        // Cross over one bin right if active bin is empty after swap,
+        // abort if swap is not complete and no bins are left
         if (active_bin.balance_right() == 0) {
-            let bin_right_id = pool.active_bin_id + 1;
+            let bin_right_id = self.active_bin_id + 1;
             if (coin_left.value() > 0) {
-                assert!(pool.bins.contains(&bin_right_id), EInsufficientPoolLiquidity);
+                assert!(self.bins.contains(&bin_right_id), EInsufficientPoolLiquidity);
             };
-            pool.set_active_bin(bin_right_id);
+            self.set_active_bin(bin_right_id);
         };
     };
     coin_left.destroy_zero();
-    
+
     result_coin
 }
 
-// Swap `coin_right` for an equivalent amount of `L` in `pool`.
-public fun swap_rtl<L, R>(pool: &mut Pool<L, R>, mut coin_right: Coin<R>, clock: &Clock, ctx: &mut TxContext): Coin<L> {
+// Swap `coin_right` for an equivalent amount of `L` in a `Pool`.
+public fun swap_rtl<L, R>(self: &mut Pool<L, R>, mut coin_right: Coin<R>, clock: &Clock, ctx: &mut TxContext): Coin<L> {
     let mut result_coin = coin::zero<L>(ctx);
-    let fee_bps = pool.fee_bps();
+    let fee_bps = self.fee_bps();
 
     // Keep emptying bins until `coin_right` is fully swapped
-    while (coin_right.value() > 0) { 
-        let active_bin = pool.get_active_bin_mut();
+    while (coin_right.value() > 0) {
+        let active_bin = self.get_active_bin_mut();
 
         let mut fee = get_fee(coin_right.value(), fee_bps);
         let mut swap_right = coin_right.value();
@@ -491,22 +502,23 @@ public fun swap_rtl<L, R>(pool: &mut Pool<L, R>, mut coin_right: Coin<R>, clock:
             }
         );
 
-        // Cross over one bin left if active bin is empty after swap, 
-        // abort if swap is not complete and no bins are left 
+        // Cross over one bin left if active bin is empty after swap,
+        // abort if swap is not complete and no bins are left
         if (active_bin.balance_left() == 0) {
-            let bin_left_id = pool.active_bin_id - 1;
+            let bin_left_id = self.active_bin_id - 1;
             if (coin_right.value() > 0) {
-                assert!(pool.bins.contains(&bin_left_id), EInsufficientPoolLiquidity);
+                assert!(self.bins.contains(&bin_left_id), EInsufficientPoolLiquidity);
             };
-            pool.set_active_bin(bin_left_id);
+            self.set_active_bin(bin_left_id);
         };
     };
     coin_right.destroy_zero();
-    
+
     result_coin
 }
 
 #[allow(unused_variable)]
+/// Delete bins that don't hold any more value.
 public fun clean_empty_bins<L, R>(self: &mut Pool<L, R>) {
     let active_bin_id = self.get_active_bin_id();
     self.bins.keys().do!(|bin_id|{
@@ -514,7 +526,7 @@ public fun clean_empty_bins<L, R>(self: &mut Pool<L, R>) {
         if (bin.balance_left() == 0 && bin.balance_right() == 0
         &&  bin.provided_left == 0 && bin.provided_right == 0 && bin_id != active_bin_id) {
             let (_idx, bin) = self.bins.remove(&bin_id);
-            // Decompose bin, so that the non-drop components, the balances,
+            // Unpack bin, so that the non-drop components, the balances,
             // can be destroyed.
             let PoolBin {price,
                     balance_left,
