@@ -228,7 +228,7 @@ entry fun add_liquidity_uniformly<L, R>(
     let coin_left_per_bin = coin_left.value() / (bin_count_half + 1);
     let mut new_bin_price = self.get_active_price().div(bin_price_factor);
     1u64.range_do_eq!(bin_count_half, |n| {
-        // Initiate new bin
+        // Initialize new bin
         let new_bin_id = active_bin_id - n;
         self.add_bin(new_bin_id, new_bin_price);
         let new_bin = self.get_bin_mut(new_bin_id);
@@ -251,7 +251,7 @@ entry fun add_liquidity_uniformly<L, R>(
     let coin_right_per_bin = coin_right.value() / (bin_count_half + 1);
     let mut new_bin_price = self.get_active_price().mul(bin_price_factor);
     1u64.range_do_eq!(bin_count_half, |n| {
-        // Initiate new bin
+        // Initialize new bin
         let new_bin_id = active_bin_id + n;
         self.add_bin(new_bin_id, new_bin_price);
         let new_bin = self.get_bin_mut(new_bin_id);
