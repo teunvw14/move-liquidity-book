@@ -15,7 +15,10 @@ const MID_U64: u64 = 9223372036854775808; // 2^64 - 1
 const MAX_BASE_FEE_BPS: u64 = 50;
 const ONE_BPS: u64 = 10000;
 
+// ======
 // Errors
+// ======
+
 #[error]
 const EInsufficientPoolLiquidity: vector<u8> =
     b"Insufficient Pool Liquidity: There is not enough liquidity inside the pool to fulfill the trade.";
@@ -32,7 +35,9 @@ const ENoLiquidityProvided: vector<u8> =
 const EInvalidPoolID: vector<u8> =
     b"Mismatched Pool ID: The Pool ID in the receipt does not match the Pool ID for withdrawal.";
 
+// =======
 // Structs
+// =======
 
 /// Liquidity Book trading pool type.
 public struct Pool<phantom L, phantom R> has key, store {
@@ -82,8 +87,12 @@ public struct LiquidityProviderReceipt has key {
     liquidity: vector<BinProvidedLiquidity> // A record of how much liquidity was provided
 }
 
+// =========
+// Functions
+// =========
+
 /// Create a new Liquidity Book `Pool`
-public entry fun new<L, R>(
+entry fun new<L, R>(
     bin_step_bps: u64,
     starting_price_mantissa: u256,
     fee_bps: u64,
