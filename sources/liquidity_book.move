@@ -1,16 +1,16 @@
 // Copyright (c) 2025 Teun van Wezel
 // SPDX-License-Identifier: Apache-2.0
 
-module l1dex::liquidity_book {
+module liquidity_book::liquidity_book {
 
 use iota::balance::{Self, Balance};
 use iota::vec_map::{Self, VecMap};
 use iota::coin::{Self, Coin};
 use iota::clock::Clock;
 
-use l1dex::ufp256::{Self, UFP256};
+use liquidity_book::ufp256::{Self, UFP256};
 
-const MID_U64: u64 = 9223372036854775808; // 2^64 - 1
+const MID_U64: u64 = 9223372036854775808; // 2^32
 // The protocol max pool fee in basis points (0.5%)
 const MAX_BASE_FEE_BPS: u64 = 50;
 const ONE_BPS: u64 = 10000;

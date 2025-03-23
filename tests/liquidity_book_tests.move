@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module l1dex::liquidity_book_tests {
+module liquidity_book::liquidity_book_tests {
 
 use iota::test_scenario as ts;
 use iota::coin::{Self, Coin};
 use iota::test_utils::assert_eq;
 use iota::clock::{Self, Clock};
 
-use l1dex::liquidity_book::{Self, Pool, LiquidityProviderReceipt};
-use l1dex::ufp256::{Self};
+use liquidity_book::liquidity_book::{Self, Pool, LiquidityProviderReceipt};
+use liquidity_book::ufp256::{Self};
 
 public struct LEFT has drop {}
 public struct RIGHT has drop {}

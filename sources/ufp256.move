@@ -3,7 +3,7 @@
 
 /// A module providing an unsigned fixed-point number type
 /// and methods for working with these numbers.
-module l1dex::ufp256 {
+module liquidity_book::ufp256 {
 
     const DECIMAL_FACTOR: u256 = 10_000_000_000_000_000_000; // 10^18
 
