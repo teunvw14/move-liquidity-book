@@ -8,18 +8,19 @@ use iota::clock::Clock;
 
 use l1dex::ufp256::{Self, UFP256};
 
-const MAX_U64: u64 = 18446744073709551615; // 2^64 - 1
+const MID_U64: u64 = 9223372036854775808; // 2^64 - 1
 // The protocol max pool fee in basis points (0.5%)
 const MAX_BASE_FEE_BPS: u64 = 50;
+const ONE_BPS: u64 = 10000;
 
 // Errors
 #[error]
 const EInsufficientPoolLiquidity: vector<u8> =
-    b"There is not enough liquidity inside the pool to fulfill the trade.";
+    b"Insufficient Pool Liquidity: There is not enough liquidity inside the pool to fulfill the trade.";
 
 #[error]
 const EEvenBincount: vector<u8> =
-    b"Illegal bin count. Bin count should be uneven.";
+    b"Illegal bin count. Bin count is even but should be uneven.";
 
 #[error]
 const ENoLiquidityProvided: vector<u8> =
@@ -27,7 +28,7 @@ const ENoLiquidityProvided: vector<u8> =
 
 #[error]
 const EInvalidPoolID: vector<u8> =
-    b"Pool ID on receipt and withdrawal pool ID are not the same.";
+    b"Mismatched Pool ID: The Pool ID in the receipt does not match the Pool ID for withdrawal.";
 
 // Structs
 
@@ -40,13 +41,16 @@ public struct Pool<phantom L, phantom R> has key, store {
     fee_bps: u64, // The base fee for a swap
 }
 
-/// Bin type for a Liquidity Book trading pool.
+/// Bin type for a Liquidity Book trading pool. Trades in this bin exchange 
+/// price * L for R. Collected fees are stored inside the bin's balances.
 public struct PoolBin<phantom L, phantom R> has store {
-    price: UFP256, // amount(L) * price = amount(R)
+    price: UFP256, // The trading price inside this bin
     balance_left: Balance<L>,
     balance_right: Balance<R>,
+    // Fee logs keep track of generated fees inside this bin.
     fee_log_left: vector<FeeLogEntry>,
     fee_log_right: vector<FeeLogEntry>,
+    // Keeps track of the total provided tokens, without any fees:
     provided_left: u64,
     provided_right: u64,
 }
@@ -54,7 +58,7 @@ public struct PoolBin<phantom L, phantom R> has store {
 /// Type for keeping track of generated fees inside a pool.
 public struct FeeLogEntry has store, copy, drop {
     amount: u64,
-    timestamp_ms: u64, // When the fee was generated
+    timestamp_ms: u64, // Timestamp from when the fee was generated
     total_bin_size_as_l: u64 // The amount of tokens in the bin (expressed in just one token)
 }
 
@@ -71,9 +75,9 @@ public struct BinProvidedLiquidity has store, copy, drop {
 /// (accidentally) be transferred.
 public struct LiquidityProviderReceipt has key {
     id: UID,
-    pool_id: ID,
-    deposit_time_ms: u64,
-    liquidity: vector<BinProvidedLiquidity>
+    pool_id: ID, // The id that the liquidity was provided in
+    deposit_time_ms: u64, // Timestamp from the moment the liquidity was provided
+    liquidity: vector<BinProvidedLiquidity> // A record of how much liquidity was provided
 }
 
 /// Create a new Liquidity Book `Pool`
@@ -93,7 +97,9 @@ public entry fun new<L, R>(
         provided_left: 0,
         provided_right: 0,
     };
-    let starting_bin_id = MAX_U64 / 2;
+    // Start the first bin with ID in the middle of the u64 range, so as the
+    // number of bins increase, the ID's don't over- or underflow
+    let starting_bin_id = MID_U64;
     let mut bins = vec_map::empty();
     bins.insert(
         starting_bin_id,
@@ -195,7 +201,7 @@ public fun balance_right<L, R>(self: &PoolBin<L, R>): u64 {
 
 /// Add liquidity to the pool around the active bin with a uniform distribution
 /// of the tokens amongst those bins.
-entry fun add_liquidity_uniformly<L, R>(
+entry fun provide_liquidity_uniformly<L, R>(
     self: &mut Pool<L, R>,
     bin_count: u64,
     mut coin_left: Coin<L>,
@@ -213,8 +219,8 @@ entry fun add_liquidity_uniformly<L, R>(
         ENoLiquidityProvided);
 
     let active_bin_id = self.get_active_bin_id();
-    let bin_count_half = (bin_count - 1) / 2; // the amount of bins left and right of the active bin
-    let bin_price_factor = ufp256::from_fraction((10000 + self.bin_step_bps) as u256, 10000u256);
+    let bins_each_side = (bin_count - 1) / 2; // the amount of bins left and right of the active bin
+    let bin_step_price_factor = ufp256::from_fraction((ONE_BPS + self.bin_step_bps) as u256, ONE_BPS as u256);
 
     // Create receipt that will function as proof of providing liquidity
     let mut receipt = LiquidityProviderReceipt {
@@ -225,9 +231,9 @@ entry fun add_liquidity_uniformly<L, R>(
     };
 
     // Add left bins
-    let coin_left_per_bin = coin_left.value() / (bin_count_half + 1);
-    let mut new_bin_price = self.get_active_price().div(bin_price_factor);
-    1u64.range_do_eq!(bin_count_half, |n| {
+    let coin_left_per_bin = coin_left.value() / (bins_each_side + 1);
+    let mut new_bin_price = self.get_active_price().div(bin_step_price_factor);
+    1u64.range_do_eq!(bins_each_side, |n| {
         // Initialize new bin
         let new_bin_id = active_bin_id - n;
         self.add_bin(new_bin_id, new_bin_price);
@@ -244,13 +250,13 @@ entry fun add_liquidity_uniformly<L, R>(
             left: coin_left_per_bin,
             right: 0
         });
-        new_bin_price = new_bin_price.div(bin_price_factor);
+        new_bin_price = new_bin_price.div(bin_step_price_factor);
     });
 
     // Add right bins
-    let coin_right_per_bin = coin_right.value() / (bin_count_half + 1);
-    let mut new_bin_price = self.get_active_price().mul(bin_price_factor);
-    1u64.range_do_eq!(bin_count_half, |n| {
+    let coin_right_per_bin = coin_right.value() / (bins_each_side + 1);
+    let mut new_bin_price = self.get_active_price().mul(bin_step_price_factor);
+    1u64.range_do_eq!(bins_each_side, |n| {
         // Initialize new bin
         let new_bin_id = active_bin_id + n;
         self.add_bin(new_bin_id, new_bin_price);
@@ -267,7 +273,7 @@ entry fun add_liquidity_uniformly<L, R>(
             left: 0,
             right: coin_right_per_bin
         });
-        new_bin_price = new_bin_price.mul(bin_price_factor);
+        new_bin_price = new_bin_price.mul(bin_step_price_factor);
     });
 
     // Add remaining liquidity to the active bin
@@ -316,7 +322,7 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
             if (fee_log.timestamp_ms < deposit_time_ms) {
                 break
             };
-            // Calculate earned fees proportionate to bin share
+            // Calculate earned fees proportional to bin share
             let fee = ufp256::from_fraction((fee_log.amount as u256) * (bin_provided_liquidity_as_l as u256), fee_log.total_bin_size_as_l as u256).truncate_to_u64();
             fees_earned_left = fees_earned_left + fee;
             // Update fee log and delete if empty
@@ -337,7 +343,7 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
             if (fee_log.timestamp_ms < deposit_time_ms) {
                 break
             };
-            // Calculate earned fees proportionate to bin share
+            // Calculate earned fees proportional to bin share
             let fee = ufp256::from_fraction((fee_log.amount as u256) * (bin_provided_liquidity_as_l as u256), fee_log.total_bin_size_as_l as u256).truncate_to_u64();
             fees_earned_right = fees_earned_right + fee;
             // Update fee log and delete if empty
@@ -357,13 +363,13 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
         } else {
             let remainder = payout_left_amount - bin.balance_left.value();
             result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
-            let remainder_as_r = bin.price.mul_u64(remainder);
-            // TODO: clean this up, this is ugly
-            if (bin.balance_right.value() >= remainder_as_r) {
-                result_coin_right.join(bin.balance_right.split(remainder_as_r).into_coin(ctx));
-            } else if (remainder_as_r - bin.balance_right.value() <=1) {
-                result_coin_right.join(bin.balance_right.withdraw_all().into_coin(ctx));
+            let mut remainder_as_r = bin.price.mul_u64(remainder);
+            // Sometimes due to rounding, the bin might contain 1 RIGHT
+            // 'too little', in which case `remainder_as_r - 1` is returned
+            if (remainder_as_r - bin.balance_right.value() == 1) {
+                remainder_as_r = remainder_as_r - 1;
             };
+            result_coin_right.join(bin.balance_right.split(remainder_as_r).into_coin(ctx));
         };
 
         // Withdraw right liquidity
@@ -374,20 +380,13 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
         } else {
             let remainder = payout_right_amount - bin.balance_right.value();
             result_coin_right.join(bin.balance_right.withdraw_all().into_coin(ctx));
-            let remainder_as_l = bin.price.div_u64(remainder);
-            if (bin.balance_left.value() >= remainder_as_l) {
-                result_coin_left.join(bin.balance_left.split(remainder_as_l).into_coin(ctx));
-            } else if (remainder_as_l - bin.balance_left.value() <=1) {
-                result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
+            let mut remainder_as_l = bin.price.div_u64(remainder);
+            // Sometimes due to rounding, the bin might contain 1 LEFT
+            // 'too little', in which case `remainder_as_l - 1` is returned
+            if (remainder_as_l - bin.balance_right.value() == 1) {
+                remainder_as_l = remainder_as_l - 1;
             };
-        };
-
-        // TODO: maybe remove this? put into `clean_empty_bins`?
-        // Empty out balances if this is the last liquidity provider, so that
-        // the bin can be cleaned up
-        if (bin.provided_left == 0 && bin.provided_right == 0) {
-            result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
-            result_coin_right.join(bin.balance_right.withdraw_all().into_coin(ctx));
+            result_coin_left.join(bin.balance_left.split(remainder_as_l).into_coin(ctx));
         };
     };
     provided_liquidity.destroy_empty();
@@ -404,13 +403,13 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
 
 /// Calculate a fee of `fee_bps` basis points.
 fun get_fee(amount: u64, fee_bps: u64): u64 {
-    let fee_factor = ufp256::from_fraction(fee_bps as u256, 10000);
+    let fee_factor = ufp256::from_fraction(fee_bps as u256, ONE_BPS as u256);
     fee_factor.mul_u64(amount)
 }
 
 /// Calculate a fee of `fee_bps` basis points, but on the output of a trade: amount/(1-fee) - amount.
 fun get_fee_inv(amount: u64, fee_bps: u64): u64 {
-    ufp256::from_fraction((10000 - fee_bps) as u256, 10000)
+    ufp256::from_fraction((ONE_BPS - fee_bps) as u256, ONE_BPS as u256)
     .div_u64(amount)
     - amount
 }
@@ -519,12 +518,21 @@ public fun swap_rtl<L, R>(self: &mut Pool<L, R>, mut coin_right: Coin<R>, clock:
 
 #[allow(unused_variable)]
 /// Delete bins that don't hold any more value.
-public fun clean_empty_bins<L, R>(self: &mut Pool<L, R>) {
+public fun clean_empty_bins<L, R>(self: &mut Pool<L, R>, ctx: &mut TxContext): (Coin<L>, Coin<R>) {
+    let mut result_coin_left = coin::zero<L>(ctx);
+    let mut result_coin_right = coin::zero<R>(ctx);
     let active_bin_id = self.get_active_bin_id();
     self.bins.keys().do!(|bin_id|{
-        let bin = self.get_bin(&bin_id);
+        let bin = self.get_bin_mut(bin_id);
+        // Empty out balances if this if there are no more liquidity providers, 
+        // so that the bin can be cleaned up
+        if (bin.provided_left == 0 && bin.provided_right == 0) {
+            result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
+            result_coin_right.join(bin.balance_right. withdraw_all().into_coin(ctx));
+        };
         if (bin.balance_left() == 0 && bin.balance_right() == 0
-        &&  bin.provided_left == 0 && bin.provided_right == 0 && bin_id != active_bin_id) {
+        &&  bin.provided_left  == 0 && bin.provided_right  == 0 
+        && bin_id != active_bin_id) {
             let (_idx, bin) = self.bins.remove(&bin_id);
             // Unpack bin, so that the non-drop components, the balances,
             // can be destroyed.
@@ -540,5 +548,7 @@ public fun clean_empty_bins<L, R>(self: &mut Pool<L, R>) {
             balance_right.destroy_zero();
         }
     });
+    (result_coin_left, result_coin_right)
 }
+
 }
