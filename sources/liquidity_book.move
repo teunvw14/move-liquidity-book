@@ -43,7 +43,7 @@ public struct Pool<phantom L, phantom R> has key, store {
     fee_bps: u64, // The base fee for a swap
 }
 
-/// Bin type for a Liquidity Book trading pool. Trades in this bin exchange 
+/// Bin type for a Liquidity Book trading pool. Trades in this bin exchange
 /// price * L for R. Collected fees are stored inside the bin's balances.
 public struct PoolBin<phantom L, phantom R> has store {
     price: UFP256, // The trading price inside this bin
@@ -526,14 +526,14 @@ public fun clean_empty_bins<L, R>(self: &mut Pool<L, R>, ctx: &mut TxContext): (
     let active_bin_id = self.get_active_bin_id();
     self.bins.keys().do!(|bin_id|{
         let bin = self.get_bin_mut(bin_id);
-        // Empty out balances if this if there are no more liquidity providers, 
+        // Empty out balances if this if there are no more liquidity providers,
         // so that the bin can be cleaned up
         if (bin.provided_left == 0 && bin.provided_right == 0) {
             result_coin_left.join(bin.balance_left.withdraw_all().into_coin(ctx));
             result_coin_right.join(bin.balance_right. withdraw_all().into_coin(ctx));
         };
         if (bin.balance_left() == 0 && bin.balance_right() == 0
-        &&  bin.provided_left  == 0 && bin.provided_right  == 0 
+        &&  bin.provided_left  == 0 && bin.provided_right  == 0
         && bin_id != active_bin_id) {
             let (_idx, bin) = self.bins.remove(&bin_id);
             // Unpack bin, so that the non-drop components, the balances,

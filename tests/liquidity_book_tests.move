@@ -136,7 +136,7 @@ fun swap_rtl_and_transfer(ts: &mut ts::Scenario, sender: address, coin_amount: u
     transfer::public_transfer(coin_left, sender);
 }
 
-/// Convenience function for providing liquidity in the most recently created 
+/// Convenience function for providing liquidity in the most recently created
 /// pool.
 #[test_only]
 fun provide_liquidity(ts: &mut ts::Scenario, sender: address, left_amount: u64, right_amount: u64, bin_count: u64, clock: &Clock) {
@@ -153,7 +153,7 @@ fun provide_liquidity(ts: &mut ts::Scenario, sender: address, left_amount: u64, 
 }
 
 /// Convenience function for withdrawing liquidity from the most recently
-/// created pool. 
+/// created pool.
 #[test_only]
 fun withdraw_liquidity(ts: &mut ts::Scenario, sender: address): (Coin<LEFT>, Coin<RIGHT>) {
     ts.next_tx(sender);
@@ -333,7 +333,7 @@ fun earn_fees_single_lp_impermanent_loss() {
     // Perform swaps
     let trader_addr = @0xA;
     let max_trade_no_fees = ufp256::new(DEFAULT_PRICE_MANTISSA).div_u64(right_supplied);
-    let max_trade = apply_fee_inv(max_trade_no_fees, DEFAULT_FEE_BPS); // The +1 is necessary due to rounding down on applying the fee
+    let max_trade = apply_fee_inv(max_trade_no_fees, DEFAULT_FEE_BPS);
     swap_ltr_and_transfer(&mut ts, trader_addr, max_trade, &clock);
 
     // Check that the expected amount of fees are earned
