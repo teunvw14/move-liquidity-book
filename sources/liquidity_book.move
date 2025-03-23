@@ -413,13 +413,13 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
 }
 
 /// Calculate a fee of `fee_bps` basis points.
-fun get_fee(amount: u64, fee_bps: u64): u64 {
+public fun get_fee(amount: u64, fee_bps: u64): u64 {
     let fee_factor = ufp256::from_fraction(fee_bps as u256, ONE_BPS as u256);
     fee_factor.mul_u64(amount)
 }
 
 /// Calculate a fee of `fee_bps` basis points, but on the output of a trade: amount/(1-fee) - amount.
-fun get_fee_inv(amount: u64, fee_bps: u64): u64 {
+public fun get_fee_inv(amount: u64, fee_bps: u64): u64 {
     ufp256::from_fraction((ONE_BPS - fee_bps) as u256, ONE_BPS as u256)
     .div_u64(amount)
     - amount

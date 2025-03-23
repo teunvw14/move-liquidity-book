@@ -9,7 +9,7 @@ use iota::coin::{Self, Coin};
 use iota::test_utils::assert_eq;
 use iota::clock::{Self, Clock};
 
-use liquidity_book::liquidity_book::{Self, Pool, LiquidityProviderReceipt};
+use liquidity_book::liquidity_book::{Self, Pool, LiquidityProviderReceipt, get_fee};
 use liquidity_book::ufp256::{Self};
 
 public struct LEFT has drop {}
@@ -24,21 +24,6 @@ const ONE_BPS: u64 = 10000;
 // ================
 // Helper functions
 // ================
-
-/// Calculate fee of `fee_bps` basis points.
-#[test_only]
-fun get_fee(amount: u64, fee_bps: u64): u64 {
-    let fee_factor = ufp256::from_fraction(fee_bps as u256, ONE_BPS as u256);
-    fee_factor.mul_u64(amount)
-}
-
-/// Calculate fee of `fee_bps` basis points, but on the output of a trade: amount/(1-fee) - amount.
-#[test_only]
-fun get_fee_inv(amount: u64, fee_bps: u64): u64 {
-    ufp256::from_fraction((ONE_BPS - fee_bps) as u256, ONE_BPS as u256)
-    .div_u64(amount)
-    - amount
-}
 
 /// Apply fee of `fee_bps` basis points.
 #[test_only]
