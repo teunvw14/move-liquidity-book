@@ -1,4 +1,6 @@
-/// Module: liquidity_book
+// Copyright (c) 2025 Teun van Wezel
+// SPDX-License-Identifier: Apache-2.0
+
 module l1dex::liquidity_book {
 
 use iota::balance::{Self, Balance};

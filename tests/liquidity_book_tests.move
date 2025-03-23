@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Teun van Wezel
+// SPDX-License-Identifier: Apache-2.0
+
 #[test_only]
 module l1dex::liquidity_book_tests {
 

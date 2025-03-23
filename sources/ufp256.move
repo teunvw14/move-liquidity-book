@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Teun van Wezel
+// SPDX-License-Identifier: Apache-2.0
+
 /// A module providing an unsigned fixed-point number type
 /// and methods for working with these numbers.
 module l1dex::ufp256 {
