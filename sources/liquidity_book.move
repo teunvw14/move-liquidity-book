@@ -10,7 +10,6 @@ use iota::coin::{Self, Coin};
 use liquidity_book::ufp256::{Self, UFP256};
 
 const MID_U64: u64 = 9223372036854775808; // 2^32
-// The protocol max pool fee in basis points (0.5%)
 const ONE_BPS: u64 = 10000;
 
 // ======
@@ -34,7 +33,7 @@ public struct Pool<phantom L, phantom R> has key, store {
 }
 
 /// Bin type for a Liquidity Book trading pool. Trades in this bin exchange
-/// price * L for R. Collected fees are stored inside the bin's balances.
+/// 1 L token for price R tokens.
 public struct PoolBin<phantom L, phantom R> has store {
     price: UFP256, // The trading price inside this bin
     balance_left: Balance<L>,
@@ -178,8 +177,8 @@ public fun swap_ltr<L, R>(self: &mut Pool<L, R>, mut coin_left: Coin<L>, ctx: &m
         let mut swap_left = coin_left.value();
         let mut swap_right = active_bin.price.mul_u64(swap_left);
 
-        // If there's not enough balance (after fees) in this bin to fulfill
-        // swap, adjust swap amounts to maximum, and update fees accordingly.
+        // If there's not enough balance in this bin to fulfill
+        // swap, adjust swap amounts to maximum.
         let bin_balance_right = active_bin.balance_right();
         if (swap_right > bin_balance_right) {
             swap_right = bin_balance_right;
@@ -216,8 +215,8 @@ public fun swap_rtl<L, R>(self: &mut Pool<L, R>, mut coin_right: Coin<R>, ctx: &
         let mut swap_right = coin_right.value();
         let mut swap_left = active_bin.price.div_u64(swap_right);
 
-        // If there's not enough balance (after fees) in this bin to fulfill
-        // swap, adjust swap amounts to maximum, and update fees accordingly.
+        // If there's not enough balance in this bin to fulfill
+        // swap, adjust swap amounts to maximum.
         let bin_balance_left = active_bin.balance_left();
         if (swap_left > bin_balance_left) {
             swap_left = bin_balance_left;
