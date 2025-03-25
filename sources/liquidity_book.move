@@ -33,7 +33,7 @@ public struct Pool<phantom L, phantom R> has key, store {
 }
 
 /// Bin type for a Liquidity Book trading pool. Trades in this bin exchange
-/// 1 L token for price R tokens.
+/// 1 L token for `price` R tokens.
 public struct PoolBin<phantom L, phantom R> has store {
     price: UFP256, // The trading price inside this bin
     balance_left: Balance<L>,
