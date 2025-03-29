@@ -19,10 +19,6 @@ const DEFAULT_PRICE_MANTISSA: u256 = 5000000000000000000; // 0.5
 const ONE_BPS: u64 = 10000;
 
 
-// ================
-// Helper functions
-// ================
-
 /// Test swaps by doing two swaps, one left-to-right, one right-to left,
 /// without crossing over any bins, checking that the received amounts are
 /// correct.
