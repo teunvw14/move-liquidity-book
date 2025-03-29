@@ -71,8 +71,8 @@ fun swap_single_bin() {
     ts.end();
 }
 
-/// Test swaps by doing two swaps, one left-to-right, one right-to left, without
-/// crossing over any bins, checking that the received amounts are correct.
+/// Test swaps by doing a swap crossing over one bin, checking that the received
+/// amount is correct.
 #[test]
 fun swap_multiple_bins() {
     let admin_addr = @0xAAAA;
