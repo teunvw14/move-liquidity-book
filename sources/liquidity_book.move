@@ -25,7 +25,7 @@ const EInsufficientPoolLiquidity: vector<u8> =
 // =======
 
 /// Liquidity Book trading pool type.
-public struct Pool<phantom L, phantom R> has key, store {
+public struct Pool<phantom L, phantom R> has key {
     id: UID,
     bins: VecMap<u64, PoolBin<L, R>>, // bins are identified with a unique id
     active_bin_id: u64, // id of the active bin
@@ -115,7 +115,7 @@ entry fun new<L, R>(
         bin_step_bps,
     };
 
-    transfer::public_share_object(pool);
+    transfer::share_object(pool);
 }
 
 /// Returns the pool's active bin price.
