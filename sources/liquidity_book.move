@@ -126,14 +126,20 @@ entry fun new<L, R>(
     transfer::share_object(pool);
 }
 
-/// Returns the pool's active bin price.
-public fun get_active_price<L, R>(self: &Pool<L, R>): UFP256 {
-    self.get_active_bin().price
+/// Returns a reference to a bin from a bin `id`.
+public fun get_bin<L, R>(self: &Pool<L, R>, id: &u64): &PoolBin<L, R>{
+    let bin = self.bins.get(id);
+    bin
 }
 
 /// Public accessor for `pool.active_bin_id`.
 public fun get_active_bin_id<L, R>(self: &Pool<L, R>): u64{
     self.active_bin_id
+}
+
+/// Returns the pool's active bin price.
+public fun get_active_price<L, R>(self: &Pool<L, R>): UFP256 {
+    self.get_active_bin().price
 }
 
 /// Returns a reference to the pool `active_bin`.
@@ -151,12 +157,6 @@ fun set_active_bin<L, R>(self: &mut Pool<L, R>, id: u64) {
     if (self.bins.contains(&id)) {
         self.active_bin_id = id;
     }
-}
-
-/// Returns a reference to a bin from a bin `id`.
-public fun get_bin<L, R>(self: &Pool<L, R>, id: &u64): &PoolBin<L, R>{
-    let bin = self.bins.get(id);
-    bin
 }
 
 /// Public accessor for `bin.price`.
