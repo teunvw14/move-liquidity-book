@@ -20,6 +20,10 @@ const ONE_BPS: u64 = 10000;
 const EInsufficientPoolLiquidity: vector<u8> =
     b"Insufficient Pool Liquidity: There is not enough liquidity inside the pool to fulfill the trade.";
 
+#[error]
+const EEvenBincount: vector<u8> =
+    b"Illegal bin count. Bin count is even but should be uneven.";
+
 // =======
 // Structs
 // =======
@@ -53,6 +57,10 @@ entry fun new<L, R>(
     bin_count: u64,
     ctx: &mut TxContext
 ) {
+    // An uneven number of bins is required, so that, including the active
+    // bin, there is liquidity added to an equal amount of bins to the left
+    // and right of the active bins
+    assert!(bin_count % 2 == 1, EEvenBincount);
 
     // Start the first bin with ID in the middle of the u64 range, so as the
     // number of bins increase, the ID's don't over- or underflow
