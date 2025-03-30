@@ -56,7 +56,7 @@ entry fun new<L, R>(
 
     // Start the first bin with ID in the middle of the u64 range, so as the
     // number of bins increase, the ID's don't over- or underflow
-    let starting_bin_id = MID_U64;
+    let starting_active_bin_id = MID_U64;
     let starting_price = ufp256::new(starting_price_mantissa);
     let mut bins = vec_map::empty();
 
@@ -67,7 +67,7 @@ entry fun new<L, R>(
     let mut new_bin_price = starting_price.div(bin_step_price_factor);
     1u64.range_do_eq!(bins_each_side, |n| {
         // Initialize new bin
-        let new_bin_id = starting_bin_id - n;
+        let new_bin_id = starting_active_bin_id - n;
         let balance_for_bin = starting_liquidity_left.split(coin_left_per_bin, ctx).into_balance();
 
         let new_bin = PoolBin {
@@ -86,7 +86,7 @@ entry fun new<L, R>(
     let mut new_bin_price = starting_price.mul(bin_step_price_factor);
     1u64.range_do_eq!(bins_each_side, |n| {
         // Initialize new bin
-        let new_bin_id = starting_bin_id + n;
+        let new_bin_id = starting_active_bin_id + n;
         let balance_for_bin = starting_liquidity_right.split(coin_right_per_bin, ctx).into_balance();
 
         let new_bin = PoolBin {
@@ -105,13 +105,13 @@ entry fun new<L, R>(
         balance_left: starting_liquidity_left.into_balance(),
         balance_right: starting_liquidity_right.into_balance()
     };
-    bins.insert(starting_bin_id, starting_bin);
+    bins.insert(starting_active_bin_id, starting_bin);
 
     // Create and share the pool
     let pool = Pool<L, R> {
         id: object::new(ctx),
         bins,
-        active_bin_id: starting_bin_id,
+        active_bin_id: starting_active_bin_id,
         bin_step_bps,
     };
 
