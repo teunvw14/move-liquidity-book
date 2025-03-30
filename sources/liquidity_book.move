@@ -59,7 +59,7 @@ entry fun new<L, R>(
 ) {
     // An uneven number of bins is required, so that, including the active
     // bin, there is liquidity added to an equal amount of bins to the left
-    // and right of the active bins
+    // and right of the active bin
     assert!(bin_count % 2 == 1, EEvenBincount);
 
     // Start the first bin with ID in the middle of the u64 range, so as the
