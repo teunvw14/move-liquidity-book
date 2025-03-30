@@ -127,13 +127,13 @@ entry fun new<L, R>(
 }
 
 /// Returns a reference to a bin from a bin `id`.
-public fun get_bin<L, R>(self: &Pool<L, R>, id: &u64): &PoolBin<L, R>{
+public fun get_bin<L, R>(self: &Pool<L, R>, id: &u64): &PoolBin<L, R> {
     let bin = self.bins.get(id);
     bin
 }
 
 /// Public accessor for `pool.active_bin_id`.
-public fun get_active_bin_id<L, R>(self: &Pool<L, R>): u64{
+public fun get_active_bin_id<L, R>(self: &Pool<L, R>): u64 {
     self.active_bin_id
 }
 
@@ -143,12 +143,12 @@ public fun get_active_price<L, R>(self: &Pool<L, R>): UFP256 {
 }
 
 /// Returns a reference to the pool `active_bin`.
-public fun get_active_bin<L, R>(self: &Pool<L, R>): &PoolBin<L, R>{
+public fun get_active_bin<L, R>(self: &Pool<L, R>): &PoolBin<L, R> {
     self.get_bin(&self.active_bin_id)
 }
 
 /// Private mutable accessor for the pool `active_bin`.
-fun get_active_bin_mut<L, R>(self: &mut Pool<L, R>): &mut PoolBin<L, R>{
+fun get_active_bin_mut<L, R>(self: &mut Pool<L, R>): &mut PoolBin<L, R> {
     self.bins.get_mut(&self.active_bin_id)
 }
 
