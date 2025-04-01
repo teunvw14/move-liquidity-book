@@ -9,7 +9,7 @@ use iota::coin::{Self, Coin};
 
 use liquidity_book::ufp256::{Self, UFP256};
 
-const MID_U64: u64 = 9223372036854775808; // 2^32
+const MID_U64: u64 = 9223372036854775808; // 2^64 / 2
 const ONE_BPS: u64 = 10000;
 
 // ======
@@ -22,7 +22,7 @@ const EInsufficientPoolLiquidity: vector<u8> =
 
 #[error]
 const EEvenBincount: vector<u8> =
-    b"Illegal bin count. Bin count is even but should be uneven.";
+    b"Illegal bin count. Bin count is even but should be odd.";
 
 // =======
 // Structs

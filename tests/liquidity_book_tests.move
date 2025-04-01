@@ -49,7 +49,7 @@ fun swap_single_bin() {
     let mut pool= ts.take_shared<Pool<LEFT, RIGHT>>();
 
     let coin_left_in = coin::mint_for_testing<LEFT>(trade_left, ts.ctx());
-    let coin_right_in = coin::mint_for_testing<RIGHT>(trade_left, ts.ctx());
+    let coin_right_in = coin::mint_for_testing<RIGHT>(trade_right, ts.ctx());
 
     let coin_right_result = pool.swap_ltr(coin_left_in, ts.ctx());
     let coin_left_result = pool.swap_rtl(coin_right_in, ts.ctx());
