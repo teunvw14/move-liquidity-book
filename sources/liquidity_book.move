@@ -242,7 +242,7 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
             let mut remainder_as_r = bin.price.mul_u64(remainder);
             // Sometimes due to rounding, the bin might contain 1 RIGHT
             // 'too little', in which case `remainder_as_r - 1` is returned
-            if (remainder_as_r - bin.balance_right.value() == 1) {
+            if (remainder_as_r == bin.balance_right.value() + 1) {
                 remainder_as_r = remainder_as_r - 1;
             };
             result_coin_right.join(bin.balance_right.split(remainder_as_r).into_coin(ctx));
@@ -258,7 +258,7 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
             let mut remainder_as_l = bin.price.div_u64(remainder);
             // Sometimes due to rounding, the bin might contain 1 LEFT
             // 'too little', in which case `remainder_as_l - 1` is returned
-            if (remainder_as_l - bin.balance_left.value() == 1) {
+            if (remainder_as_l == bin.balance_left.value() + 1) {
                 remainder_as_l = remainder_as_l - 1;
             };
             result_coin_left.join(bin.balance_left.split(remainder_as_l).into_coin(ctx));
