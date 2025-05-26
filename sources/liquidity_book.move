@@ -25,7 +25,7 @@ const EInsufficientPoolLiquidity: vector<u8> =
 
 #[error]
 const EEvenBincount: vector<u8> =
-    b"Illegal bin count. Bin count is even but should be uneven.";
+    b"Illegal bin count. Bin count is even but should be odd.";
 
 #[error]
 const ENoLiquidityProvided: vector<u8> =
@@ -220,7 +220,7 @@ entry fun provide_liquidity_uniformly<L, R>(
     clock: &Clock,
     ctx: &mut TxContext
 ) {
-    // An uneven number of bins is required, so that, including the active
+    // An odd number of bins is required, so that, including the active
     // bin, there is liquidity added to an equal amount of bins to the left
     // and right of the active bins
     assert!(bin_count % 2 == 1, EEvenBincount);

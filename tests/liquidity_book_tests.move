@@ -541,7 +541,7 @@ fun abort_too_large_trade() {
 /// Test that a supplying liquidity with an even number of bins fails.
 #[test]
 #[expected_failure(abort_code = liquidity_book::EEvenBincount)]
-fun provide_liquidity_uniformly_abort_on_uneven_bin_count() {
+fun provide_liquidity_uniformly_abort_on_odd_bin_count() {
     let mut ts = scenario_default_pool();
 
     let bin_count = 2;
