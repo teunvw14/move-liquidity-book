@@ -5,12 +5,19 @@
 module liquidity_book::liquidity_book_tests {
 
 use iota::test_scenario as ts;
-use iota::coin::{Self, Coin};
 use iota::test_utils::assert_eq;
+use iota::coin::{Self, Coin};
 use iota::clock::{Self, Clock};
 
-use liquidity_book::liquidity_book::{Self, Pool, LiquidityProviderReceipt, get_fee};
+use liquidity_book::liquidity_book::{
+    Self,
+    Pool,
+    LiquidityProviderReceipt,
+    get_fee
+};
 use liquidity_book::ufp256::{Self};
+use std::option::none;
+use std::option::some;
 
 public struct LEFT has drop {}
 public struct RIGHT has drop {}
@@ -44,24 +51,27 @@ fun apply_fee_inv(amount: u64, fee_bps: u64): u64 {
 fun scenario_default_pool(): ts::Scenario {
     let placeholder_addr = @0xABCDEF;
     let mut ts = ts::begin(placeholder_addr);
-    liquidity_book::new<LEFT, RIGHT>(
-        DEFAULT_BIN_STEP,
-        DEFAULT_PRICE_MANTISSA,
-        DEFAULT_FEE_BPS,
-        ts.ctx()
-    );
+    {
+        liquidity_book::new<LEFT, RIGHT>(
+            DEFAULT_BIN_STEP,
+            DEFAULT_PRICE_MANTISSA,
+            DEFAULT_FEE_BPS,
+            ts.ctx()
+        );
+    };
     ts
 }
 
-/// Start the default scenario, creating a pool with default parameters, and
+/// Start the defaut scenario, creating a pool with default parameters, and
 /// adding liquidity to that pool.
 #[test_only]
 fun scenario_default_pool_with_liquidity(sender: address, bin_count: u64, left_amount: u64, right_amount: u64): (ts::Scenario, Clock) {
     let mut ts = scenario_default_pool();
     let clock = clock::create_for_testing(ts.ctx());
     ts.next_tx(sender);
-    provide_liquidity(&mut ts, sender, left_amount, right_amount, bin_count, &clock);
-
+    {
+        provide_liquidity(&mut ts, sender, left_amount, right_amount, bin_count, &clock);
+    };
     (ts, clock)
 }
 
@@ -75,24 +85,34 @@ fun end_scenario_with_clock(ts: ts::Scenario, clock: Clock) {
 /// Convenience function for making a left-to-right swap in the most recently
 /// created pool.
 #[test_only]
-fun swap_ltr(ts: &mut ts::Scenario, sender: address, coin_amount: u64, clock: &Clock): Coin<RIGHT> {
+fun swap_ltr(
+    ts: &mut ts::Scenario,
+    sender: address,
+    coin_amount: u64,
+    clock: &Clock
+): Coin<RIGHT> {
     ts.next_tx(sender);
+    {
+        let coin_left = coin::mint_for_testing<LEFT>(coin_amount, ts.ctx());
 
-    let coin_left = coin::mint_for_testing<LEFT>(coin_amount, ts.ctx());
+        let mut pool = ts.take_shared<Pool<LEFT, RIGHT>>();
+        let coin_right = pool.swap_ltr(coin_left, clock, ts.ctx());
 
-    let mut pool= ts.take_shared<Pool<LEFT, RIGHT>>();
-
-    let coin_right = pool.swap_ltr(coin_left, clock, ts.ctx());
-    // Complete transaction to see swap effects
-    ts::return_shared(pool);
-    coin_right
+        ts::return_shared(pool);
+        coin_right
+    }
 }
 
 /// Convenience function for making a left-to-right swap in the most recently
 /// created pool. The resulting coin is immediately transferred to the
 /// transaction sender.
 #[test_only]
-fun swap_ltr_and_transfer(ts: &mut ts::Scenario, sender: address, coin_amount: u64, clock: &Clock) {
+fun swap_ltr_and_transfer(
+    ts: &mut ts::Scenario,
+    sender: address,
+    coin_amount: u64,
+    clock: &Clock
+) {
     let coin_right = swap_ltr(ts, sender, coin_amount, clock);
     transfer::public_transfer(coin_right, sender);
 }
@@ -100,23 +120,34 @@ fun swap_ltr_and_transfer(ts: &mut ts::Scenario, sender: address, coin_amount: u
 /// Convenience function for making a right-to-left swap in the most recently
 /// created pool.
 #[test_only]
-fun swap_rtl(ts: &mut ts::Scenario, sender: address, coin_amount: u64, clock: &Clock): Coin<LEFT> {
+fun swap_rtl(
+    ts: &mut ts::Scenario,
+    sender: address,
+    coin_amount: u64,
+    clock: &Clock
+): Coin<LEFT> {
     ts.next_tx(sender);
-    let coin_right = coin::mint_for_testing<RIGHT>(coin_amount, ts.ctx());
+    {
+        let coin_right = coin::mint_for_testing<RIGHT>(coin_amount, ts.ctx());
 
-    let mut pool= ts.take_shared<Pool<LEFT, RIGHT>>();
+        let mut pool = ts.take_shared<Pool<LEFT, RIGHT>>();
+        let coin_left = pool.swap_rtl(coin_right, clock, ts.ctx());
 
-    let coin_left = pool.swap_rtl(coin_right, clock, ts.ctx());
-
-    ts::return_shared(pool);
-    coin_left
+        ts::return_shared(pool);
+        coin_left
+    }
 }
 
 /// Convenience function for making a right-to-left swap in the most recently
 /// created pool. The resulting coin is immediately transferred to the
 /// transaction sender.
 #[test_only]
-fun swap_rtl_and_transfer(ts: &mut ts::Scenario, sender: address, coin_amount: u64, clock: &Clock) {
+fun swap_rtl_and_transfer(
+    ts: &mut ts::Scenario,
+    sender: address,
+    coin_amount: u64,
+    clock: &Clock
+) {
     let coin_left = swap_rtl(ts, sender, coin_amount, clock);
     transfer::public_transfer(coin_left, sender);
 }
@@ -124,51 +155,109 @@ fun swap_rtl_and_transfer(ts: &mut ts::Scenario, sender: address, coin_amount: u
 /// Convenience function for providing liquidity in the most recently created
 /// pool.
 #[test_only]
-fun provide_liquidity(ts: &mut ts::Scenario, sender: address, left_amount: u64, right_amount: u64, bin_count: u64, clock: &Clock) {
+fun provide_liquidity_receipt(
+    ts: &mut ts::Scenario,
+    sender: address,
+    left_amount: u64,
+    right_amount: u64,
+    bin_count: u64,
+    clock: &Clock
+): LiquidityProviderReceipt {
     ts.next_tx(sender);
+    {
+        let coin_left = coin::mint_for_testing<LEFT>(left_amount, ts.ctx());
+        let coin_right = coin::mint_for_testing<RIGHT>(right_amount, ts.ctx());
 
-    let coin_left = coin::mint_for_testing<LEFT>(left_amount, ts.ctx());
-    let coin_right = coin::mint_for_testing<RIGHT>(right_amount, ts.ctx());
+        let mut pool = ts.take_shared<Pool<LEFT, RIGHT>>();
 
-    let mut pool= ts.take_shared<Pool<LEFT, RIGHT>>();
+        let receipt = pool.provide_liquidity_uniformly(
+            bin_count,
+            coin_left,
+            coin_right,
+            clock,
+            ts.ctx()
+        );
 
-    pool.provide_liquidity_uniformly(bin_count, coin_left, coin_right, clock, ts.ctx());
+        ts::return_shared(pool);
+        receipt
+    }
+}
 
-    ts::return_shared(pool);
+/// Convenience function for providing liquidity in the most recently created
+/// pool and then transferring the receipt
+#[test_only]
+fun provide_liquidity(
+    ts: &mut ts::Scenario,
+    sender: address,
+    left_amount: u64,
+    right_amount: u64,
+    bin_count: u64,
+    clock: &Clock
+) {    ts.next_tx(sender);
+    {
+        let receipt = provide_liquidity_receipt(
+            ts,
+            sender,
+            left_amount,
+            right_amount,
+            bin_count,
+            clock
+        );
+        transfer::public_transfer(receipt, sender);
+    }
 }
 
 /// Convenience function for withdrawing liquidity from the most recently
 /// created pool.
 #[test_only]
-fun withdraw_liquidity(ts: &mut ts::Scenario, sender: address): (Coin<LEFT>, Coin<RIGHT>) {
+fun withdraw_liquidity_with_receipt(
+    ts: &mut ts::Scenario,
+    sender: address,
+    receipt: LiquidityProviderReceipt
+): (Coin<LEFT>, Coin<RIGHT>) {
     ts.next_tx(sender);
+    {
+        let mut pool = ts.take_shared<Pool<LEFT, RIGHT>>();
 
-    let mut pool= ts.take_shared<Pool<LEFT, RIGHT>>();
-    let receipt = ts.take_from_address<LiquidityProviderReceipt>(sender);
+        let (coin_left, coin_right) = pool.withdraw_liquidity(receipt, ts.ctx());
+        ts::return_shared(pool);
+        (coin_left, coin_right)
+    }
+}
 
-    pool.withdraw_liquidity(receipt, ts.ctx());
-
-    // Next transaction so that the withdrawal takes effect
+/// Convenience function for withdrawing liquidity from the most recently
+/// created pool.
+#[test_only]
+fun withdraw_liquidity(
+    ts: &mut ts::Scenario,
+    sender: address
+): (Coin<LEFT>, Coin<RIGHT>) {
     ts.next_tx(sender);
-    let coin_left = ts.take_from_address<Coin<LEFT>>(sender);
-    let coin_right = ts.take_from_address<Coin<RIGHT>>(sender);
+    {
+        let receipt = ts.take_from_address<LiquidityProviderReceipt>(sender);
 
-    ts::return_shared(pool);
-    (coin_left, coin_right)
+        withdraw_liquidity_with_receipt(ts, sender, receipt)
+    }
 }
 
 /// Convenience function for withdrawing liquidity from the most recently
 /// created pool and checking the values of the paid out coins.
 #[test_only]
-fun withdraw_and_check_coin_values(ts: &mut ts::Scenario, sender: address, expected_left_value: u64, expected_right_value: u64) {
+fun withdraw_and_check_coin_values(
+    ts: &mut ts::Scenario,
+    sender: address,
+    expected_left_value: u64,
+    expected_right_value: u64
+) {
     ts.next_tx(sender);
+    {
+        let (coin_left, coin_right) = withdraw_liquidity(ts, sender);
+        assert_eq(coin_left.value(), expected_left_value);
+        assert_eq(coin_right.value(), expected_right_value);
 
-    let (coin_left, coin_right) = withdraw_liquidity(ts, sender);
-    assert_eq(coin_left.value(), expected_left_value);
-    assert_eq(coin_right.value(), expected_right_value);
-
-    ts::return_to_address(sender, coin_left);
-    ts::return_to_address(sender, coin_right);
+        transfer::public_transfer(coin_left, sender);
+        transfer::public_transfer(coin_right, sender);
+    };
 }
 
 // =====
@@ -189,7 +278,14 @@ fun provide_liquidity_and_withdraw_single() {
     let clock = clock::create_for_testing(ts.ctx());
 
     // Provide liquidity and immediately withdraw
-    provide_liquidity(&mut ts, lp_addr, left_amount, right_amount, bin_count, &clock);
+    provide_liquidity(
+        &mut ts,
+        lp_addr,
+        left_amount,
+        right_amount,
+        bin_count,
+        &clock
+    );
     withdraw_and_check_coin_values(&mut ts, lp_addr, left_amount, right_amount);
 
     end_scenario_with_clock(ts, clock);
@@ -209,22 +305,28 @@ fun provide_liquidity_and_withdraw_plural() {
     let right_amounts = vector[1, 3, 5, 7, 9];
 
     // First provide all liquidity
-    let mut i = 0;
-    lp_addrs.do!(|lp_addr|{
-        provide_liquidity(&mut ts, lp_addr, left_amounts[i], right_amounts[i], bin_count, &clock);
-        i = i + 1;
+    lp_addrs.length().do!(|i| {
+        provide_liquidity(
+            &mut ts,
+            lp_addrs[i],
+            left_amounts[i],
+            right_amounts[i],
+            bin_count,
+            &clock
+        );
     });
 
+    lp_addrs.length().do!(|i| {
     // Then withdraw one by one
-    let mut i = 0;
-    lp_addrs.do!(|lp_addr|{
-        withdraw_and_check_coin_values(&mut ts, lp_addr, left_amounts[i], right_amounts[i]);
-        i = i + 1;
+        withdraw_and_check_coin_values(
+            &mut ts,
+            lp_addrs[i],
+            left_amounts[i],
+            right_amounts[i]
+        );
     });
 
-    clock.destroy_for_testing();
-
-    ts.end();
+    end_scenario_with_clock(ts, clock);
 }
 
 /// Test if fees are properly distributed when there is a single liquidity
@@ -241,20 +343,29 @@ fun earn_fees_single_lp() {
 
     let clock = clock::create_for_testing(ts.ctx());
 
-    provide_liquidity(&mut ts, lp_addr, left_supplied, right_supplied, bin_count, &clock);
+    provide_liquidity(&mut ts,
+        lp_addr,
+        left_supplied,
+        right_supplied,
+        bin_count,
+        &clock
+    );
 
     // Perform swaps
     let trade_left = 1 * 10u64.pow(9);
     let trade_right = ufp256::new(DEFAULT_PRICE_MANTISSA).mul_u64(trade_left);
-
-    let expected_earned_fee_left = get_fee(trade_left, DEFAULT_FEE_BPS);
-    let expected_earned_fee_right = get_fee(trade_right, DEFAULT_FEE_BPS);
-
     swap_ltr_and_transfer(&mut ts, trader_addr, trade_left, &clock);
     swap_rtl_and_transfer(&mut ts, trader_addr, trade_right, &clock);
 
     // Check that the expected amount of fees are earned
-    withdraw_and_check_coin_values(&mut ts, lp_addr, left_supplied + expected_earned_fee_left, right_supplied + expected_earned_fee_right);
+    let expected_earned_fee_left = get_fee(trade_left, DEFAULT_FEE_BPS);
+    let expected_earned_fee_right = get_fee(trade_right, DEFAULT_FEE_BPS);
+    withdraw_and_check_coin_values(
+        &mut ts,
+        lp_addr,
+        left_supplied + expected_earned_fee_left,
+        right_supplied + expected_earned_fee_right
+    );
     end_scenario_with_clock(ts, clock);
 }
 
@@ -463,7 +574,7 @@ fun swap_single_bin_lots_of_swaps() {
 
     // Perform 100 swaps
     let mut i = 0;
-    while (i < 100) {
+    while (i < 1000) {
         swap_ltr_and_transfer(&mut ts, trader_addr, trade_left, &clock);
         swap_rtl_and_transfer(&mut ts, trader_addr, trade_right, &clock);
         i = i + 1;
@@ -480,6 +591,7 @@ fun reject_invalid_receipt() {
     let lp_addr = @0xA;
     let left_supplied = 5 * 10u64.pow(9);
     let right_supplied = 5 * 10u64.pow(9);
+    // Create first pool
     let (mut ts, clock) = scenario_default_pool_with_liquidity(
         @0xABCDEF,
         1,
@@ -487,7 +599,7 @@ fun reject_invalid_receipt() {
         right_supplied
     );
 
-    // Create second pool have `lp_addr` provide the same liquidity as already
+    // Create second pool and have `lp_addr` provide the same liquidity as already
     // exists in the first pool
     liquidity_book::new<LEFT, RIGHT>(
         DEFAULT_BIN_STEP,
@@ -495,18 +607,25 @@ fun reject_invalid_receipt() {
         DEFAULT_FEE_BPS,
         ts.ctx()
     );
-    provide_liquidity(&mut ts, lp_addr, left_supplied, right_supplied, 1, &clock);
-
+    let receipt = provide_liquidity_receipt(
+        &mut ts,
+        lp_addr,
+        left_supplied,
+        right_supplied,
+        1,
+        &clock
+    );
     // Get receipt to try to withdraw liquidity from the other pool
     ts.next_tx(lp_addr);
-    let receipt = ts.take_from_address<LiquidityProviderReceipt>(lp_addr);
 
     // Call take_shared twice to get the first pool
     let second_pool = ts.take_shared<Pool<LEFT, RIGHT>>();
     let mut first_pool = ts.take_shared<Pool<LEFT, RIGHT>>();
 
     // Try to withdraw from the wrong pool
-    first_pool.withdraw_liquidity(receipt, ts.ctx());
+    let (left_coin, right_coin) = first_pool.withdraw_liquidity(receipt, ts.ctx());
+    transfer::public_transfer(left_coin, lp_addr);
+    transfer::public_transfer(right_coin, lp_addr);
 
     ts::return_shared(second_pool);
     ts::return_shared(first_pool);
@@ -559,7 +678,8 @@ fun provide_liquidity_uniformly_abort_on_no_liquidity() {
 
     let bin_count = 1;
     let clock = clock::create_for_testing(ts.ctx());
-    provide_liquidity(&mut ts, @0xABCDEF, 0, 0, bin_count, &clock);
+    let placeholder_addr = @0xABCDEF;
+    provide_liquidity(&mut ts, placeholder_addr, 0, 0, bin_count, &clock);
 
     end_scenario_with_clock(ts, clock);
 }

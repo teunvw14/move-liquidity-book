@@ -78,9 +78,8 @@ public struct BinProvidedLiquidity has store, copy, drop {
 }
 
 /// Receipt given to liquidity providers when they provide liquidity. Is used to
-/// withdraw provided liquidity. No `store` capability so this cannot
-/// (accidentally) be transferred.
-public struct LiquidityProviderReceipt has key {
+/// withdraw provided liquidity.
+public struct LiquidityProviderReceipt has key, store {
     id: UID,
     pool_id: ID, // The id that the liquidity was provided in
     deposit_time_ms: u64, // Timestamp from the moment the liquidity was provided
@@ -212,14 +211,14 @@ public fun balance_right<L, R>(self: &PoolBin<L, R>): u64 {
 
 /// Add liquidity to the pool around the active bin with a uniform distribution
 /// of the tokens amongst those bins.
-entry fun provide_liquidity_uniformly<L, R>(
+public fun provide_liquidity_uniformly<L, R>(
     self: &mut Pool<L, R>,
     bin_count: u64,
     mut coin_left: Coin<L>,
     mut coin_right: Coin<R>,
     clock: &Clock,
     ctx: &mut TxContext
-) {
+): LiquidityProviderReceipt {
     // An odd number of bins is required, so that, including the active
     // bin, there is liquidity added to an equal amount of bins to the left
     // and right of the active bins
@@ -303,13 +302,19 @@ entry fun provide_liquidity_uniformly<L, R>(
         right: amount_right_active_bin
     });
 
-    // Give receipt
-    transfer::transfer(receipt, ctx.sender());
+    // Return receipt
+    receipt
 }
 
 /// Withdraw all provided liquidity from `pool` using a
 /// `LiquidityProviderReceipt`.
-entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityProviderReceipt, ctx: &mut TxContext) {
+public fun withdraw_liquidity<L, R> (
+    self: &mut Pool<L, R>,
+    receipt: LiquidityProviderReceipt,
+    ctx: &mut TxContext
+):
+    (Coin<L>, Coin<R>)
+{
     let LiquidityProviderReceipt {id: receipt_id, pool_id: receipt_pool_id, deposit_time_ms, liquidity: mut provided_liquidity} = receipt;
 
     // Make sure that he receipt was given for liquidity in this pool
@@ -402,14 +407,11 @@ entry fun withdraw_liquidity<L, R> (self: &mut Pool<L, R>, receipt: LiquidityPro
     };
     provided_liquidity.destroy_empty();
 
-    // Send the liquidity back to the liquidity provider
-    let sender = ctx.sender();
-
-    transfer::public_transfer(result_coin_left, sender);
-    transfer::public_transfer(result_coin_right, sender);
-
     // Delete the receipt so liquidity can't be withdrawn twice
     object::delete(receipt_id);
+
+    // Return the coins
+    (result_coin_left, result_coin_right)
 }
 
 /// Calculate a fee of `fee_bps` basis points.
